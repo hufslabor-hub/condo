@@ -6,7 +6,7 @@ const admin = require('firebase-admin');
 const fs = require('fs');
 const crypto = require('crypto');
 
-const SALT = 'change-me'; // index.html 의 SALT와 반드시 동일하게
+const SALT = 'makingsaltforthefirsttime'; // index.html 의 SALT와 반드시 동일하게
 
 admin.initializeApp({ credential: admin.credential.cert(require('./serviceAccount.json')) });
 const db = admin.firestore();
