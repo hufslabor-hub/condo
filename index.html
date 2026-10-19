@@ -207,12 +207,13 @@ import { getFirestore, doc, getDoc, setDoc, addDoc, updateDoc, collection, query
 
 /* ===== 설정 ===== */
 const firebaseConfig = {
-  apiKey: "YOUR_API_KEY",
-  authDomain: "YOUR_PROJECT.firebaseapp.com",
-  projectId: "YOUR_PROJECT",
-  appId: "YOUR_APP_ID"
+apiKey: "AIzaSyDwgx92K7dpogncskLGwq2ztRfxMlWF05k",
+  authDomain: "hufs-condo.firebaseapp.com",
+  projectId: "hufs-condo",
+  appId: "1:12175036651:web:72a23d2310c03afdf92eae"
+
 };
-const SALT = "change-me";                       // scripts/admin.js 의 SALT와 반드시 동일하게
+const SALT = "makingsaltforthefirsttime";                       // scripts/admin.js 의 SALT와 반드시 동일하게
 const DEADLINE = new Date("2026-12-08T00:00:00+09:00"); // 12/7 24:00 (firestore.rules 와 동일)
 
 const app = initializeApp(firebaseConfig);
