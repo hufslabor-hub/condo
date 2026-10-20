@@ -12,6 +12,34 @@ admin.initializeApp({ credential: admin.credential.cert(require('./serviceAccoun
 const db = admin.firestore();
 const sha = s => crypto.createHash('sha256').update(s, 'utf8').digest('hex');
 
+// admin.js (또는 auth.js)
+
+// 1. 필요한 함수들을 import 합니다.
+import { getAuth, sendSignInLinkToEmail } from "firebase/auth";
+
+// 2. 설정 객체를 만듭니다.
+const actionCodeSettings = {
+  url: 'https://www.example.com/finishSignUp', // 인증 후 돌아올 주소
+  handleCodeInApp: true,
+  // 필요에 따라 iOS, Android 설정 추가
+};
+
+// 3. 인증 객체를 가져옵니다.
+const auth = getAuth();
+
+// 4. 이메일 전송 함수를 정의합니다.
+export const sendLink = (email) => {
+  sendSignInLinkToEmail(auth, email, actionCodeSettings)
+    .then(() => {
+      window.localStorage.setItem('emailForSignIn', email);
+      alert('인증 링크가 전송되었습니다.');
+    })
+    .catch((error) => {
+      console.error("오류 발생:", error.message);
+    });
+};
+
+
 async function importMembers(file) {
   const lines = fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, '').split(/\r?\n/).filter(l => l.trim());
   const seen = new Set();
