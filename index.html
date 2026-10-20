@@ -86,12 +86,15 @@ textarea{resize:vertical;min-height:84px}
 @media (prefers-reduced-motion:no-preference){.fill{transition:width .5s}}
 
 /* 댓글 */
-.cm{padding:14px 0;border-top:1px solid var(--line)}
-.cm.reply{margin-left:20px;padding:10px 0 10px 14px;border-left:3px solid var(--blue-soft);border-top:0}
+.cm{padding:12px 0 0;border-top:1px solid var(--line)}
+.kids{margin-left:12px;padding-left:12px;border-left:3px solid var(--blue-soft)}
+.kids>.cm{border-top:0;padding-top:10px}
+.cm.flat>.kids{margin-left:0;padding-left:0;border-left:0}
 .cm .who{font-weight:700;font-size:14px}
 .cm .meta{color:var(--muted);font-size:13px;margin-left:6px}
 .cm .txt{white-space:pre-wrap;margin:2px 0}
 .cm .acts{display:flex;gap:14px}
+.cm .to{color:var(--blue);font-size:13px;margin-left:6px}
 .gone{color:var(--muted);font-style:italic}
 
 /* 관리자 */
@@ -184,7 +187,7 @@ dialog h2{margin:0 0 4px;font-size:19px;color:var(--navy)}
   <div id="memberView" hidden>
     <section class="card" id="survey">
       <h2>찬반 설문조사</h2>
-      <p>리조트 회원권 구매 검토에 찬성하시나요? 응답은 <b>2026년 12월 7일(월) 24:00까지</b> 몇 번이든 변경할 수 있습니다.</p>
+      <p>리조트 회원권 구매 검토에 찬성하시나요? 응답은 <b>2026년 12월 14일(월) 24:00까지</b> 몇 번이든 변경할 수 있습니다.</p>
       <p class="muted">이 설문조사는 의견수렴 절차이며, 결과로 구매가 확정되지는 않습니다. 최종 결정은 12월 15일 총회에서 이루어집니다.</p>
       <form id="voteForm">
         <div class="choice">
@@ -195,7 +198,7 @@ dialog h2{margin:0 0 4px;font-size:19px;color:var(--navy)}
         <span class="muted" id="voteStatus" style="margin-left:10px"></span>
         <div class="err" id="voteErr" role="alert"></div>
       </form>
-      <h3 style="margin-top:28px">설문 결과</h3>
+      <h3 style="margin-top:28px">현재 응답 현황 <span class="muted" style="font-weight:400">· 실시간</span></h3>
       <div id="result"></div>
     </section>
 
@@ -238,7 +241,7 @@ dialog h2{margin:0 0 4px;font-size:19px;color:var(--navy)}
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";
 import { getAuth, signInAnonymously, signInWithEmailAndPassword, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
-import { getFirestore, doc, getDoc, setDoc, addDoc, updateDoc, collection, query, orderBy, onSnapshot, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
+import { getFirestore, doc, getDoc, setDoc, addDoc, runTransaction, updateDoc, collection, query, orderBy, onSnapshot, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
 
 /* ===== 설정 ===== */
 // 지금 쓰고 계신 hufs-condo 프로젝트의 값으로 바꿔 넣으세요 (기존 index.html에서 그대로 복사)
@@ -251,7 +254,7 @@ const firebaseConfig = {
   appId: "1:12175036651:web:72a23d2310c03afdf92eae"
 };
 const SALT = "makingsaltforthefirsttime";                // scripts/admin.js 의 SALT와 반드시 동일하게
-const DEADLINE = new Date("2026-12-08T00:00:00+09:00");  // 12/7 24:00 (firestore.rules 와 동일)
+const DEADLINE = new Date("2026-12-15T00:00:00+09:00");  // 12/14 24:00 (firestore.rules 와 동일)
 
 /* ===== 기본 안내문 (관리자가 수정·저장하면 Firestore의 내용이 우선합니다) ===== */
 const DEFAULT_NOTICE = {
@@ -317,12 +320,12 @@ function setMode(mode){
   $("#toLogin").hidden = mode !== "guest";
   $("#navLogin").hidden = mode !== "guest";
   $("#memberView").hidden = mode === "guest";
-  $("#survey").hidden = mode !== "member";
+  $("#voteForm").hidden = mode !== "member";
   $("#composer").hidden = mode !== "member";
   $("#adminBar").hidden = mode !== "admin";
   $("#logout").hidden = mode === "guest";
   $("#adminLink").hidden = mode === "admin";
-  $$("[data-member]").forEach(a => a.hidden = mode === "guest" || (mode === "admin" && a.getAttribute("href") === "#survey"));
+  $$("[data-member]").forEach(a => a.hidden = mode === "guest");
   $("#who").textContent = mode === "member" ? `${state.me.name}님` : mode === "admin" ? "관리자" : "";
   if (mode !== "admin") closeEditor();
 }
@@ -464,7 +467,7 @@ $("#logout").onclick = async () => { await signOut(auth); window.scrollTo(0, 0);
 onAuthStateChanged(auth, async user => {
   if (state.logging) return;
   if (!user) { teardown(); setMode("guest"); return; }
-  if (user.providerData.some(p => p.providerId === "password")) { teardown(); setMode("admin"); listenComments(); return; }
+  if (user.providerData.some(p => p.providerId === "password")) { teardown(); setMode("admin"); listenTally(); listenComments(); return; }
   try { await enter(user); } catch { await signOut(auth); }
 });
 
@@ -477,11 +480,13 @@ async function enter(user){
   state.me = { uid:user.uid, memberKey, name:m.data().name, authorId:m.data().authorId };
   setMode("member");
   $("#loginForm").reset();
-  loadVote(); loadResult(); listenComments();
+  loadVote(); listenTally(); listenComments();
 }
 function teardown(){
   state.unsubs.forEach(u => u()); state.unsubs = [];
+  state.tallyUnsub?.(); state.tallyUnsub = null;
   state.me = null; state.comments = [];
+  renderTally(0, 0);
   $("#comments").innerHTML = "";
 }
 
@@ -511,24 +516,37 @@ $("#voteForm").onsubmit = async e => {
   if (!c) { err.textContent = "찬성 또는 반대를 선택해 주세요."; return; }
   $("#voteBtn").disabled = true;
   try {
-    await setDoc(doc(db,"votes",state.me.memberKey), { choice:c, updatedAt: serverTimestamp() });
+    const vRef = doc(db,"votes",state.me.memberKey), tRef = doc(db,"meta","tally");
+    await runTransaction(db, async tx => {
+      const [v, t] = await Promise.all([tx.get(vRef), tx.get(tRef)]);
+      let a = t.exists() ? t.data().agree : 0, d = t.exists() ? t.data().disagree : 0;
+      const old = v.exists() ? v.data().choice : null;
+      if (old === "agree") a--; if (old === "disagree") d--;
+      if (c === "agree") a++; else d++;
+      tx.set(vRef, { choice:c, updatedAt: serverTimestamp() });
+      tx.set(tRef, { agree:a, disagree:d });
+    });
     await loadVote();
   } catch { err.textContent = "응답을 저장하지 못했습니다. 설문 기간이 끝났거나 네트워크 문제일 수 있습니다."; }
   finally { $("#voteBtn").disabled = !votingOpen(); }
 };
-async function loadResult(){
-  const box = $("#result");
-  if (votingOpen()) { box.innerHTML = `<p class="muted">설문 결과는 2026년 12월 8일부터 공개됩니다.</p>`; return; }
-  try {
-    const r = await getDoc(doc(db,"meta","result"));
-    if (!r.exists()) { box.innerHTML = `<p class="muted">결과를 집계하고 있습니다. 잠시 후 다시 확인해 주세요.</p>`; return; }
-    const { agree, disagree, total, memberCount } = r.data();
-    const pct = n => total ? Math.round(n / total * 100) : 0;
-    box.innerHTML = `
-      <div class="bar"><b>찬성</b><div class="track"><div class="fill" style="width:${pct(agree)}%"></div></div><span>${agree}명 (${pct(agree)}%)</span></div>
-      <div class="bar"><b>반대</b><div class="track"><div class="fill no" style="width:${pct(disagree)}%"></div></div><span>${disagree}명 (${pct(disagree)}%)</span></div>
-      <p class="muted">총 ${total}명 참여${memberCount ? ` / 조합원 ${memberCount}명 (참여율 ${Math.round(total/memberCount*100)}%)` : ""}</p>`;
-  } catch { box.innerHTML = `<p class="muted">결과를 불러오지 못했습니다.</p>`; }
+function renderTally(agree, disagree){
+  const total = agree + disagree;
+  const pct = n => total ? Math.round(n / total * 100) : 0;
+  const bar = (name, n, cls) => `
+    <div class="bar"><b>${name}</b>
+      <div class="track" role="img" aria-label="${name} ${n}명 ${pct(n)}%"><div class="fill ${cls}" style="width:${pct(n)}%"></div></div>
+      <span>${n}명 (${pct(n)}%)</span></div>`;
+  $("#result").innerHTML = bar("찬성", agree, "") + bar("반대", disagree, "no") +
+    `<p class="muted">${total ? `총 ${total}명이 응답했습니다.` : "아직 응답이 없습니다."}</p>`;
+}
+renderTally(0, 0);
+function listenTally(){
+  state.tallyUnsub?.();
+  state.tallyUnsub = onSnapshot(doc(db,"meta","tally"), s => {
+    const t = s.exists() ? s.data() : {};
+    renderTally(t.agree || 0, t.disagree || 0);
+  }, () => { $("#result").innerHTML = `<p class="muted">응답 현황을 불러오지 못했습니다.</p>`; });
 }
 
 /* ===== 질문 및 토론 게시판 (안내문 하단 댓글) ===== */
@@ -539,19 +557,20 @@ function listenComments(){
   }, () => $("#boardErr").textContent = "댓글을 불러오지 못했습니다.")];
 }
 
-function commentHtml(c, label, isReply){
+function commentHtml(c, label, depth, parentLabel, kidsHtml){
   const mine = !!state.me && c.authorId === state.me.authorId;
   const canDel = !c.deleted && (mine || state.mode === "admin");
-  return `<div class="cm ${isReply ? "reply" : ""}">
-    <div><span class="who">${esc(label(c.authorId))}</span><span class="meta">${fmt(c.createdAt)}</span></div>
+  return `<div class="cm ${depth >= 4 ? "flat" : ""}">
+    <div><span class="who">${esc(label(c.authorId))}</span><span class="meta">${fmt(c.createdAt)}</span>${depth >= 4 && parentLabel ? `<span class="to">→ ${esc(parentLabel)}</span>` : ""}</div>
     <div class="txt ${c.deleted ? "gone" : ""}">${c.deleted ? "삭제된 댓글입니다." : esc(c.body)}</div>
     <div class="acts">
-      ${!isReply && !c.deleted && state.mode === "member" ? `<button class="link" data-act="reply-toggle" data-id="${c.id}">답글</button>` : ""}
+      ${!c.deleted && state.mode === "member" ? `<button class="link" data-act="reply-toggle" data-id="${c.id}">답글</button>` : ""}
       ${canDel ? `<button class="link" data-act="del" data-id="${c.id}">${mine ? "삭제" : "관리자 삭제"}</button>` : ""}
     </div>
     ${state.replyOpen.has(c.id) ? `<div style="margin:8px 0">
       <textarea data-draft="r:${c.id}" maxlength="1000" placeholder="답글을 입력하세요" style="min-height:60px"></textarea>
       <div class="row"><button class="btn small" data-act="reply-send" data-id="${c.id}">답글 등록</button></div></div>` : ""}
+    ${kidsHtml ? `<div class="kids">${kidsHtml}</div>` : ""}
   </div>`;
 }
 
@@ -561,11 +580,16 @@ function renderComments(){
   cs.forEach(c => { if (!nick.has(c.authorId)) nick.set(c.authorId, "익명" + (++n)); });
   const label = id => (nick.get(id) || "익명") + (state.me && id === state.me.authorId ? " (나)" : "");
   const a = document.activeElement, key = a?.dataset?.draft, pos = a?.selectionStart;
-  const tops = cs.filter(c => !c.parentId).reverse();
+
+  const ids = new Set(cs.map(c => c.id)), kids = {};
+  cs.forEach(c => { if (c.parentId && ids.has(c.parentId)) (kids[c.parentId] ||= []).push(c); });
+  const node = (c, depth, parent) =>
+    commentHtml(c, label, depth, parent && label(parent.authorId), (kids[c.id] || []).map(r => node(r, depth + 1, c)).join(""));
+  const tops = cs.filter(c => !c.parentId || !ids.has(c.parentId)).reverse();   // 최신 댓글이 위
+
   $("#commentCount").textContent = `댓글 ${cs.filter(c => !c.deleted).length}개`;
-  $("#comments").innerHTML = tops.map(c =>
-    commentHtml(c, label, false) + cs.filter(r => r.parentId === c.id).map(r => commentHtml(r, label, true)).join("")
-  ).join("") || `<p class="muted">아직 댓글이 없습니다. 첫 질문이나 의견을 남겨 주세요.</p>`;
+  $("#comments").innerHTML = tops.map(c => node(c, 0, null)).join("") ||
+    `<p class="muted">아직 댓글이 없습니다. 첫 질문이나 의견을 남겨 주세요.</p>`;
   $$("#comments [data-draft]").forEach(t => t.value = drafts[t.dataset.draft] || "");
   if (key) {
     const t = document.querySelector(`[data-draft="${CSS.escape(key)}"]`);

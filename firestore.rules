@@ -2,8 +2,11 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // 투표 마감: 2026-12-07 24:00 KST = 2026-12-07 15:00 UTC (index.html의 DEADLINE과 동일)
-    function deadline() { return timestamp.date(2026, 12, 7) + duration.value(15, 'h'); }
+    // ★ 관리자 UID: Firebase 콘솔 > Authentication > 사용자 에서 관리자 계정의 'User UID'를 복사해 넣으세요.
+    function isAdmin() { return request.auth != null && request.auth.uid == t2u1ukiBcuMHbPYemBUFOe0bdZF2; }
+
+    // 설문 마감: 2026-12-14 24:00 KST = 2026-12-14 15:00 UTC (index.html의 DEADLINE과 동일)
+    function deadline() { return timestamp.date(2026, 12, 14) + duration.value(15, 'h'); }
 
     function signedIn() { return request.auth != null; }
     function sessionPath() { return /databases/$(database)/documents/sessions/$(request.auth.uid); }
@@ -11,6 +14,29 @@ service cloud.firestore {
     function myKey() { return get(sessionPath()).data.memberKey; }
     function myAuthorId() {
       return get(/databases/$(database)/documents/members/$(myKey())).data.authorId;
+    }
+
+    // 응답(votes)과 집계(meta/tally)는 항상 같은 트랜잭션으로만 바뀌도록 서로 검증
+    function vPath() { return /databases/$(database)/documents/votes/$(myKey()); }
+    function tPath() { return /databases/$(database)/documents/meta/tally; }
+    function oldChoice() { return exists(vPath()) ? get(vPath()).data.choice : ''; }
+    function newChoice() { return getAfter(vPath()).data.choice; }
+    function oldA() { return exists(tPath()) ? get(tPath()).data.agree : 0; }
+    function oldD() { return exists(tPath()) ? get(tPath()).data.disagree : 0; }
+    function dA() { return (newChoice() == 'agree' ? 1 : 0) - (oldChoice() == 'agree' ? 1 : 0); }
+    function dD() { return (newChoice() == 'disagree' ? 1 : 0) - (oldChoice() == 'disagree' ? 1 : 0); }
+    function tallyOk() {
+      return getAfter(tPath()).data.agree == oldA() + dA()
+          && getAfter(tPath()).data.disagree == oldD() + dD();
+    }
+
+    // 안내문: 로그인 전에도 누구나 읽기 가능, 수정은 관리자만
+    match /notice/{id} {
+      allow read: if true;
+      allow write: if isAdmin()
+        && request.resource.data.keys().hasOnly(['title', 'chips', 'blocks', 'updatedAt'])
+        && request.resource.data.title is string
+        && request.resource.data.blocks is list;
     }
 
     // 조합원 명부: 관리자 스크립트로만 작성, 본인 문서만 읽기 가능 (목록 조회 불가)
@@ -30,53 +56,40 @@ service cloud.firestore {
       allow list, update, delete: if false;
     }
 
-    // 투표: 조합원당 1표, 마감 전까지 수정 가능, 본인 투표만 조회 가능
+    // 찬반 설문: 조합원당 1표, 마감 전까지 수정 가능, 본인 응답만 조회 가능
     match /votes/{key} {
       allow get: if authed() && key == myKey();
       allow create, update: if authed() && key == myKey()
         && request.time < deadline()
         && request.resource.data.keys().hasOnly(['choice', 'updatedAt'])
         && request.resource.data.choice in ['agree', 'disagree']
-        && request.resource.data.updatedAt == request.time;
+        && request.resource.data.updatedAt == request.time
+        && tallyOk();
       allow list, delete: if false;
     }
 
-    // 집계 결과: 관리자 스크립트가 작성, 마감 이후에만 조합원 조회 가능
-    match /meta/result {
-      allow get: if authed() && request.time >= deadline();
-      allow write: if false;
+    // 실시간 응답 현황: 로그인한 조합원·관리자가 조회, 본인 응답과 함께 바뀔 때만 수정 가능
+    match /meta/tally {
+      allow get: if authed() || isAdmin();
+      allow write: if authed() && request.time < deadline()
+        && request.resource.data.keys().hasOnly(['agree', 'disagree'])
+        && request.resource.data.agree is int && request.resource.data.disagree is int
+        && tallyOk();
     }
 
-    // 게시글
-    match /posts/{id} {
-      allow read: if authed();
-      allow create: if authed()
-        && request.resource.data.keys().hasOnly(['title', 'body', 'authorId', 'createdAt', 'deleted'])
-        && request.resource.data.authorId == myAuthorId()
-        && request.resource.data.title is string
-        && request.resource.data.title.size() > 0 && request.resource.data.title.size() <= 100
-        && request.resource.data.body is string
-        && request.resource.data.body.size() > 0 && request.resource.data.body.size() <= 3000
-        && request.resource.data.createdAt == request.time
-        && request.resource.data.deleted == false;
-      allow update: if authed() && resource.data.authorId == myAuthorId()
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['deleted', 'body']);
-      allow delete: if false;   // 삭제는 '삭제된 글' 처리(soft delete)만 허용
-    }
-
-    // 댓글·답글 (parentId가 null이면 댓글, 값이 있으면 답글)
+    // 질문 및 토론 게시판 댓글·답글 (parentId가 null이면 댓글, 값이 있으면 답글)
     match /comments/{id} {
-      allow read: if authed();
+      allow read: if authed() || isAdmin();
       allow create: if authed()
-        && request.resource.data.keys().hasOnly(['postId', 'parentId', 'body', 'authorId', 'createdAt', 'deleted'])
+        && request.resource.data.keys().hasOnly(['parentId', 'body', 'authorId', 'createdAt', 'deleted'])
         && request.resource.data.authorId == myAuthorId()
-        && request.resource.data.postId is string
         && (request.resource.data.parentId == null || request.resource.data.parentId is string)
         && request.resource.data.body is string
         && request.resource.data.body.size() > 0 && request.resource.data.body.size() <= 1000
         && request.resource.data.createdAt == request.time
         && request.resource.data.deleted == false;
-      allow update: if authed() && resource.data.authorId == myAuthorId()
+      // 작성자 본인 또는 관리자가 '삭제된 댓글' 처리(soft delete)
+      allow update: if (isAdmin() || (authed() && resource.data.authorId == myAuthorId()))
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['deleted', 'body']);
       allow delete: if false;
     }

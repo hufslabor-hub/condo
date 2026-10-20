@@ -1,44 +1,17 @@
 // 관리자용 스크립트 (본인 PC에서만 실행. serviceAccount.json 은 절대 GitHub에 올리지 마세요)
 //   npm i firebase-admin
 //   node admin.js import members.csv   # 조합원 명부 등록 (CSV: 이름,생년월일8자리)
-//   node admin.js tally                # 투표 집계 → meta/result 저장 (12/8 이후 실행)
-const admin = require('firebase-admin');
+//   node admin.js tally                # 응답을 다시 세어 meta/tally(실시간 현황) 바로잡기
+const { initializeApp, cert } = require('firebase-admin/app');
+const { getFirestore, FieldValue } = require('firebase-admin/firestore');
 const fs = require('fs');
 const crypto = require('crypto');
 
-const SALT = 'makingsaltforthefirsttime'; // index.html 의 SALT와 반드시 동일하게
+const SALT = 'change-me'; // index.html 의 SALT와 반드시 동일하게
 
-admin.initializeApp({ credential: admin.credential.cert(require('./serviceAccount.json')) });
-const db = admin.firestore();
+initializeApp({ credential: cert(require('./serviceAccount.json')) });
+const db = getFirestore();
 const sha = s => crypto.createHash('sha256').update(s, 'utf8').digest('hex');
-
-// admin.js (또는 auth.js)
-
-// 1. 필요한 함수들을 import 합니다.
-import { getAuth, sendSignInLinkToEmail } from "firebase/auth";
-
-// 2. 설정 객체를 만듭니다.
-const actionCodeSettings = {
-  url: 'https://www.example.com/finishSignUp', // 인증 후 돌아올 주소
-  handleCodeInApp: true,
-  // 필요에 따라 iOS, Android 설정 추가
-};
-
-// 3. 인증 객체를 가져옵니다.
-const auth = getAuth();
-
-// 4. 이메일 전송 함수를 정의합니다.
-export const sendLink = (email) => {
-  sendSignInLinkToEmail(auth, email, actionCodeSettings)
-    .then(() => {
-      window.localStorage.setItem('emailForSignIn', email);
-      alert('인증 링크가 전송되었습니다.');
-    })
-    .catch((error) => {
-      console.error("오류 발생:", error.message);
-    });
-};
-
 
 async function importMembers(file) {
   const lines = fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, '').split(/\r?\n/).filter(l => l.trim());
@@ -47,6 +20,7 @@ async function importMembers(file) {
   for (const line of lines) {
     const [rawName, rawBirth] = line.split(',').map(s => (s || '').trim());
     if (rawName === '이름') continue; // 헤더
+    if (!rawName && !rawBirth) continue; // 엑셀이 남기는 빈 줄(",")은 조용히 건너뜀
     const name = rawName.normalize('NFC').replace(/\s+/g, '');
     const birth = (rawBirth || '').replace(/\D/g, '');
     if (!name || birth.length !== 8) { console.warn('형식 오류, 건너뜀:', line); bad++; continue; }
@@ -62,15 +36,15 @@ async function importMembers(file) {
 }
 
 async function tally() {
+  // 실제 응답(votes)을 다시 세어 화면에 보이는 실시간 현황(meta/tally)을 바로잡습니다.
+  // 테스트 응답을 지운 뒤나 마감 후 최종 확인 때 실행하세요.
   const votes = await db.collection('votes').get();
   let agree = 0, disagree = 0;
   votes.forEach(d => (d.data().choice === 'agree' ? agree++ : disagree++));
   const memberCount = (await db.collection('members').count().get()).data().count;
-  await db.doc('meta/result').set({
-    agree, disagree, total: agree + disagree, memberCount,
-    tallyAt: admin.firestore.FieldValue.serverTimestamp()
-  });
-  console.log({ agree, disagree, total: agree + disagree, memberCount });
+  await db.doc('meta/tally').set({ agree, disagree });
+  console.log({ agree, disagree, total: agree + disagree, memberCount,
+    참여율: memberCount ? Math.round((agree + disagree) / memberCount * 100) + '%' : '-' });
 }
 
 const [cmd, arg] = process.argv.slice(2);
