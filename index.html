@@ -206,12 +206,12 @@ import { getAuth, signInAnonymously, signOut, onAuthStateChanged } from "https:/
 import { getFirestore, doc, getDoc, setDoc, addDoc, updateDoc, collection, query, orderBy, onSnapshot, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
 
 /* ===== 설정 ===== */
-const firebaseConfig = {
-apiKey: "AIzaSyDwgx92K7dpogncskLGwq2ztRfxMlWF05k",
-  authDomain: "hufs-condo.firebaseapp.com",
-  projectId: "hufs-condo",
-  appId: "1:12175036651:web:72a23d2310c03afdf92eae"
-
+  apiKey: "AIzaSyD3mVhB-UFN2AA42UsjdfD1O8NeCTFZz9g",
+  authDomain: "hufs-labor-account.firebaseapp.com",
+  projectId: "hufs-labor-account",
+  storageBucket: "hufs-labor-account.firebasestorage.app",
+  messagingSenderId: "910268319877",
+  appId: "1:910268319877:web:c1079a3731c74c33adc1ec"
 };
 const SALT = "makingsaltforthefirsttime";                       // scripts/admin.js 의 SALT와 반드시 동일하게
 const DEADLINE = new Date("2026-12-08T00:00:00+09:00"); // 12/7 24:00 (firestore.rules 와 동일)
@@ -258,7 +258,8 @@ $("#loginForm").onsubmit = async e => {
     const { user } = await signInAnonymously(auth);
     try {
       await setDoc(doc(db,"sessions",user.uid), { memberKey, createdAt: serverTimestamp() });
-    } catch {
+    } catch (e) {
+      console.error(e);
       await signOut(auth);
       throw new Error("일치하는 조합원 정보를 찾을 수 없습니다. 이름과 생년월일을 확인해 주세요.");
     }
