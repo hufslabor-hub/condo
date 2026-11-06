@@ -603,9 +603,22 @@ function renderComments(){
 
   const ids = new Set(cs.map(c => c.id)), kids = {};
   cs.forEach(c => { if (c.parentId && ids.has(c.parentId)) (kids[c.parentId] ||= []).push(c); });
+
+  // 삭제된 댓글 아래 살아 있는 후손이 없으면 화면에서 숨김
+  const hasLiveDesc = (id) => {
+    const ch = kids[id] || [];
+    for (const x of ch) {
+      if (!x.deleted) return true;
+      if (hasLiveDesc(x.id)) return true;
+    }
+    return false;
+  };
+  const visible = (c) => !c.deleted || hasLiveDesc(c.id);
+
   const node = (c, depth, parent) =>
-    commentHtml(c, label, depth, parent && label(parent.authorId), (kids[c.id] || []).map(r => node(r, depth + 1, c)).join(""));
-  const tops = cs.filter(c => !c.parentId || !ids.has(c.parentId)).reverse();   // 최신 댓글이 위
+    commentHtml(c, label, depth, parent && label(parent.authorId),
+      (kids[c.id] || []).filter(visible).map(r => node(r, depth + 1, c)).join(""));
+  const tops = cs.filter(c => (!c.parentId || !ids.has(c.parentId)) && visible(c)).reverse();
 
   $("#commentCount").textContent = `댓글 ${cs.filter(c => !c.deleted).length}개`;
   $("#comments").innerHTML = tops.map(c => node(c, 0, null)).join("") ||
@@ -647,11 +660,16 @@ $("#comments").addEventListener("click", async e => {
       delete drafts["r:" + id]; state.replyOpen.delete(id);
     }
     else if (act === "del" && confirm("이 댓글을 삭제할까요?")) {
-      // 답글이 하나도 없으면 문서 자체 삭제, 있으면 '삭제된 댓글입니다.' 표시만
-      const hasReplies = state.comments.some(x => x.parentId === id);
-      if (hasReplies) {
+      // 살아 있는 답글이 있으면 soft delete, 없으면 문서 완전 삭제
+      // (이미 삭제된 답글만 있는 경우도 완전 삭제 + 그 답글들도 정리)
+      const children = state.comments.filter(x => x.parentId === id);
+      const hasLiveReplies = children.some(x => !x.deleted);
+      if (hasLiveReplies) {
         await updateDoc(doc(db,"comments",id), { deleted:true, body:"" });
       } else {
+        for (const ch of children) {
+          await deleteDoc(doc(db,"comments",ch.id));
+        }
         await deleteDoc(doc(db,"comments",id));
       }
       state.editOpen.delete(id);
