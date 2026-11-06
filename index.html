@@ -562,7 +562,10 @@ function listenComments(){
 }
 
 function commentHtml(c, label, depth, parentLabel, kidsHtml){
-  const mine = !!(state.me && state.me.authorId && String(c.authorId) === String(state.me.authorId));
+  // 댓글·대댓글 모두 작성자 식별값(authorId 또는 기존 UID 필드)으로 본인 여부 확인
+  const myIds = [state.me?.authorId, state.me?.uid].filter(v => v != null).map(String);
+  const commentOwnerIds = [c.authorId, c.authorUid, c.uid].filter(v => v != null).map(String);
+  const mine = myIds.some(v => commentOwnerIds.includes(v));
   const canReply = !c.deleted && state.mode === "member";
   const canEdit = !c.deleted && mine;
   const canDel = !c.deleted && (mine || state.mode === "admin");
@@ -656,22 +659,13 @@ $("#comments").addEventListener("click", async e => {
     }
     else if (act === "reply-send") {
       const body = (drafts["r:" + id] || "").trim(); if (!body) return;
-      await addDoc(collection(db,"comments"), { parentId:id, body, authorId:state.me.authorId, createdAt:serverTimestamp(), deleted:false });
+      await addDoc(collection(db,"comments"), { parentId:id, body, authorId:state.me.authorId, authorUid:auth.currentUser?.uid || state.me.uid || null, createdAt:serverTimestamp(), deleted:false });
       delete drafts["r:" + id]; state.replyOpen.delete(id);
     }
     else if (act === "del" && confirm("이 댓글을 삭제할까요?")) {
-      // 살아 있는 답글이 있으면 soft delete, 없으면 문서 완전 삭제
-      // (이미 삭제된 답글만 있는 경우도 완전 삭제 + 그 답글들도 정리)
-      const children = state.comments.filter(x => x.parentId === id);
-      const hasLiveReplies = children.some(x => !x.deleted);
-      if (hasLiveReplies) {
-        await updateDoc(doc(db,"comments",id), { deleted:true, body:"" });
-      } else {
-        for (const ch of children) {
-          await deleteDoc(doc(db,"comments",ch.id));
-        }
-        await deleteDoc(doc(db,"comments",id));
-      }
+      // 댓글과 대댓글 모두 해당 문서를 완전히 삭제합니다.
+      // 하위 답글은 보존되며, 부모 문서가 없어지면 독립 댓글처럼 표시됩니다.
+      await deleteDoc(doc(db,"comments",id));
       state.editOpen.delete(id);
       state.replyOpen.delete(id);
       delete drafts["e:" + id];
@@ -685,7 +679,7 @@ $("#newCommentBtn").onclick = async () => {
   if (!body) { err.textContent = "내용을 입력해 주세요."; return; }
   $("#newCommentBtn").disabled = true;
   try {
-    await addDoc(collection(db,"comments"), { parentId:null, body, authorId:state.me.authorId, createdAt:serverTimestamp(), deleted:false });
+    await addDoc(collection(db,"comments"), { parentId:null, body, authorId:state.me.authorId, authorUid:auth.currentUser?.uid || state.me.uid || null, createdAt:serverTimestamp(), deleted:false });
     $("#newComment").value = "";
   } catch { err.textContent = "댓글을 등록하지 못했습니다. 잠시 후 다시 시도해 주세요."; }
   finally { $("#newCommentBtn").disabled = false; }
